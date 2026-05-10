@@ -18,7 +18,11 @@ export async function POST(req: NextRequest) {
   const { data, error } = await supabase.rpc('lookup_tracking', { p_code: code })
 
   if (error) {
-    return NextResponse.json({ found: false, error: error.message })
+    return NextResponse.json({ found: false, error: `RPC error: ${error.message} | code: ${error.code}` })
+  }
+
+  if (data === null || data === undefined) {
+    return NextResponse.json({ found: false, error: 'RPC returned null — check env vars or function name' })
   }
 
   const result = data as { found: boolean; customer_name?: string; products?: string[] }
