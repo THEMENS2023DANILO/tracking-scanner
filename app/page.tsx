@@ -116,6 +116,9 @@ export default function Home() {
                 <p className="text-5xl mb-4">❌</p>
                 <p className="text-xl font-bold text-red-400">Código não encontrado</p>
                 <p className="text-gray-500 text-sm mt-2 font-mono">{tracking}</p>
+                {result.error && (
+                  <p className="text-yellow-400 text-xs mt-3 font-mono break-all">{result.error}</p>
+                )}
               </div>
             )}
 
