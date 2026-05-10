@@ -31,22 +31,58 @@ export async function POST(req: NextRequest) {
   // 2. Search in tiny_invoices by codigo_rastreamento
   const { data: tinyRow } = await supabase
     .from('tiny_invoices')
-    .select('numero_ecommerce, codigo_rastreamento')
+    .select('numero_ecommerce, codigo_rastreamento, cliente_nome, raw_data')
     .eq('codigo_rastreamento', code)
     .limit(1)
     .single()
 
-  if (tinyRow?.numero_ecommerce) {
-    const { data: orderRows } = await supabase
-      .from('order_prescription_validation')
-      .select('customer_name, product_name, medication')
-      .eq('order_external_id', tinyRow.numero_ecommerce)
+  if (tinyRow) {
+    // 2a. If linked to ecommerce order, fetch from order_prescription_validation
+    if (tinyRow.numero_ecommerce) {
+      const { data: orderRows } = await supabase
+        .from('order_prescription_validation')
+        .select('customer_name, product_name, medication')
+        .eq('order_external_id', tinyRow.numero_ecommerce)
 
-    if (orderRows && orderRows.length > 0) {
-      const customer_name = orderRows[0].customer_name
-      const products = orderRows.map(r => r.product_name || r.medication).filter(Boolean)
+      if (orderRows && orderRows.length > 0) {
+        const customer_name = orderRows[0].customer_name
+        const products = orderRows.map(r => r.product_name || r.medication).filter(Boolean)
+        await supabase.from('scan_logs').insert({ tracking_code: code, customer_name, found: true })
+        return NextResponse.json({ found: true, customer_name, products })
+      }
+    }
+
+    // 2b. No ecommerce link — extract CPF from raw_data and find products by CPF + date
+    const rawData = tinyRow.raw_data as Record<string, any>
+    const customer_name = tinyRow.cliente_nome || rawData?.nome || rawData?.cliente?.nome
+    const cpfRaw: string = rawData?.cliente?.cpf_cnpj ?? ''
+    const cpf = cpfRaw.replace(/\D/g, '')
+    const dataEmissao: string = rawData?.data_emissao ?? '' // format: DD/MM/YYYY
+
+    if (cpf && dataEmissao) {
+      const [dd, mm, yyyy] = dataEmissao.split('/')
+      const orderDate = `${yyyy}-${mm}-${dd}`
+      const dateFrom = new Date(orderDate)
+      dateFrom.setDate(dateFrom.getDate() - 30)
+      const dateTo = new Date(orderDate)
+      dateTo.setDate(dateTo.getDate() + 5)
+
+      const { data: orderRows } = await supabase
+        .from('order_prescription_validation')
+        .select('product_name, medication')
+        .eq('customer_cpf', cpf)
+        .gte('order_date', dateFrom.toISOString().split('T')[0])
+        .lte('order_date', dateTo.toISOString().split('T')[0])
+
+      const products = orderRows?.map(r => r.product_name || r.medication).filter(Boolean) ?? []
       await supabase.from('scan_logs').insert({ tracking_code: code, customer_name, found: true })
       return NextResponse.json({ found: true, customer_name, products })
+    }
+
+    // 2c. At least return the customer name even if no products found
+    if (customer_name) {
+      await supabase.from('scan_logs').insert({ tracking_code: code, customer_name, found: true })
+      return NextResponse.json({ found: true, customer_name, products: [] })
     }
   }
 
